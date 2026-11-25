@@ -1,5 +1,12 @@
 // Import des cours (.ics ou bloc JSON « edt-cours ») et export iCalendar.
-import { S, put, del, kindOf, subjectFor, setSetting, occurrences, subjById } from './store.js';
+import { S, put, del, kindOf, subjectFor, setSetting, occurrences, subjById, ACADEMIC, shortRooms } from './store.js';
+
+// matière existante citée dans un titre de séance (« Révision Séries : ex 5-8 » → Séries)
+function matchSubject(title) {
+  const t = ' ' + norm(title) + ' ';
+  const hit = [...S.data.subjects].sort((a, b) => b.name.length - a.name.length).find(s => t.includes(' ' + norm(s.name) + ' '));
+  return hit ? hit.id : '';
+}
 import { uid, norm, dateOf, parisDT, addDays, todayKey, durMin } from './util.js';
 import { occTitle } from './calendar.js';
 
@@ -42,12 +49,16 @@ export function splitCourse(summary) {
 
 const NO_SUBJECT = /réservation|reservation|matière à préciser|matiere a preciser|hackathon|international week/i;
 
-export function importCourses(raw, { from = '', until = '', replace = true, includeRetakes = false } = {}) {
+const REVISION = /r[ée]vision|^rev$|travail perso|exos?$/i;
+const KIND_CAT = [[/^(sport|sp)$/i, 'sport'], [/bde|volley/i, 'bde'], [/sortie|soir[ée]e/i, 'sortie'], [/perso|objectif/i, 'perso'], [/repas/i, 'repas']];
+
+export function importCourses(raw, { from = '', until = '', replace = true, includeRetakes = false, source = 'ics' } = {}) {
   const st = S.data, today = todayKey();
   const list = raw.filter(c => (!from || dateOf(c.start) >= from) && (!until || dateOf(c.start) <= until));
   if (replace && list.length) {
+    // ne remplace que les cours venus de la même source (un .ics n'efface pas un plan de révisions collé en JSON)
     const lo = list.reduce((a, c) => c.start < a ? c.start : a, list[0].start).slice(0, 10), hi = list.reduce((a, c) => c.start > a ? c.start : a, list[0].start).slice(0, 10);
-    for (const ev of [...st.events]) if (ev.kind === 'course' && dateOf(ev.start) >= lo && dateOf(ev.start) <= hi) del('events', ev.id);
+    for (const ev of [...st.events]) if (ev.kind === 'course' && (ev.source || 'ics') === source && dateOf(ev.start) >= lo && dateOf(ev.start) <= hi) del('events', ev.id);
   }
   let n = 0, exams = 0, skipped = 0; const newSubjects = new Set(st.subjects.map(s => s.id));
   for (const c of list) {
@@ -56,15 +67,26 @@ export function importCourses(raw, { from = '', until = '', replace = true, incl
     if (/rattrapage/i.test(kind) && !includeRetakes) { skipped++; continue; }
     const isExam = /examen|^cc$|partiel/i.test(kind);
     const isSport = /^sp$/i.test(kind) || /sport/i.test(title);
-    const cat = isExam ? 'examen' : isSport ? 'sport' : /^nr$/i.test(kind) ? 'autre' : 'cours';
-    const subject = !isSport && !NO_SUBJECT.test(title) && !/^nr$/i.test(kind) ? subjectFor(title) : '';
+    const isRev = REVISION.test(kind);
+    const other = KIND_CAT.find(([re]) => re.test(kind));
+    const cat = isExam ? 'examen' : isSport ? 'sport' : isRev ? 'revision' : other ? other[1]
+      : /^nr$/i.test(kind) && /^r[ée]servation/i.test(title) ? 'autre' : 'cours';
+    // une matière n'est créée que pour un vrai cours (CM, TD, TP, examen…) au nom court
+    const subject = c.subject ? subjectFor(c.subject)
+      : isRev ? matchSubject(title)
+      : !isSport && !other && ACADEMIC.test(kind) && !NO_SUBJECT.test(title) && title.length <= 50 && (kind || !/[:·\d]/.test(title)) ? subjectFor(title) : '';
+    if (cat !== 'cours' && cat !== 'examen' && cat !== 'autre') {
+      // révisions, BDE, sport… collés en JSON : des créneaux à toi, que l'organisation auto ne touche pas
+      put('events', { id: 'j-' + hash(title + c.start), kind: 'manual', cat, subject, title, location: c.location || '', start: c.start, end: c.end > c.start ? c.end : c.start, status: '', pinned: true });
+      n++; continue;
+    }
     if (isExam && subject && dateOf(c.start) >= today) {
       const s = subjById(subject); if (s && (!s.examDate || s.examDate < today || dateOf(c.start) < s.examDate)) put('subjects', { ...s, examDate: dateOf(c.start) });
       exams++;
     }
     if (isExam && /toefl|toeic/i.test(title) && dateOf(c.start) >= today) setSetting('toeflDate', dateOf(c.start));
     const id = 'c-' + hash(c.uid || title) + '-' + c.start.replace(/\D/g, '');
-    put('events', { id, kind: 'course', cat, subject, title, courseType: kind, location: [c.location, c.prof].filter(Boolean).join(' · '), start: c.start, end: c.end > c.start ? c.end : c.start, status: '' });
+    put('events', { id, kind: 'course', source, cat, subject, title, courseType: kind, location: shortRooms([c.location, c.prof].filter(Boolean).join(' · ')), start: c.start, end: c.end > c.start ? c.end : c.start, status: '' });
     n++;
   }
   const created = st.subjects.filter(s => !newSubjects.has(s.id)).length;
@@ -77,7 +99,7 @@ export function fromICS(text) {
 export function fromJSON(text) {
   const o = JSON.parse(text);
   if (!o || !Array.isArray(o.events)) throw new Error('format');
-  return o.events.map(e => ({ title: String(e.title || ''), kind: String(e.kind || ''), location: String(e.location || ''), start: String(e.start || '').slice(0, 16), end: String(e.end || '').slice(0, 16), prof: '' }))
+  return o.events.map(e => ({ title: String(e.title || ''), kind: String(e.kind || e.type || ''), subject: String(e.subject || e.matiere || ''), location: String(e.location || ''), start: String(e.start || '').slice(0, 16), end: String(e.end || '').slice(0, 16), prof: '' }))
     .filter(e => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(e.start));
 }
 

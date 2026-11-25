@@ -10,7 +10,7 @@ export const occTitle = ev => {
   if (k === 'revision' && s) return ev.title && ev.title !== s.name ? `${s.name} · ${ev.title}` : s.name;
   return ev.title || (catById(ev.cat) || {}).name || 'Sans titre';
 };
-export const isMissed = o => !o.status && o.end < nowDT() && ACTIONABLE.includes(kindOf(o.ev));
+export const isMissed = o => o.ev.kind !== 'course' && !o.status && o.end < nowDT() && ACTIONABLE.includes(kindOf(o.ev));
 const visible = o => S.ui.filter[o.ev.cat] !== false;
 
 export function periodDays() {

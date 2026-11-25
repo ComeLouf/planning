@@ -4,13 +4,25 @@ import { addDays, dateOf, dow, dt, durMin, toMin, timeOf, uid, norm } from './ut
 
 export const KEY = 'mon-planning-v1';
 export const COLLS = ['categories', 'subjects', 'habits', 'goals', 'tasks', 'events'];
+// un nouvel appareil (données vierges) n'a rien à nettoyer
+const FRESH_MIGRATED = 2;
 
 export const S = { data: null, undo: [], ui: { page: 'calendar', view: 'week', date: null, dayGrid: false, filter: {} }, hooks: { saved: [], changed: [] }, saveError: false };
 
 export function load() {
   try { S.data = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { S.data = null; }
-  if (!S.data || !S.data.settings) S.data = seedState();
+  if (!S.data || !S.data.settings) { S.data = seedState(); S.data.migrated = FRESH_MIGRATED; }
+  const before = S.data.migrated;
   migrate(S.data);
+  if (before !== S.data.migrated) try { localStorage.setItem(KEY, JSON.stringify(S.data)); } catch (e) {}
+}
+// types de cours qui correspondent à une vraie matière (pas l'e-learning, les réservations, les projets…)
+export const ACADEMIC = /^(cm|cmo|td|tp|examen|cc|partiel|lv|cours|)$/i;
+// « NCHA-101,NCHA-102,NCHA-104 · Prof » → « NCHA-101 +2 · Prof »
+export function shortRooms(loc) {
+  const [rooms, ...rest] = String(loc || '').split(' · ');
+  const list = rooms.split(',').map(x => x.trim()).filter(Boolean);
+  return [list.length > 2 ? `${list[0]} +${list.length - 1}` : list.join(', '), ...rest].filter(Boolean).join(' · ');
 }
 function migrate(d) {
   const base = seedState();
@@ -18,6 +30,21 @@ function migrate(d) {
   for (const c of COLLS) if (!Array.isArray(d[c])) d[c] = [];
   if (!d.deleted || typeof d.deleted !== 'object') d.deleted = {};
   for (const c of base.categories) if (!d.categories.some(x => x.id === c.id)) d.categories.push(c);
+  if ((d.migrated || 0) < 2) {
+    // nettoyage des premiers imports : catégories, matières en trop, salles à rallonge
+    const now = Date.now();
+    for (const ev of d.events) {
+      if (ev.kind !== 'course') continue;
+      let ch = false;
+      if (ev.cat === 'autre' && /^nr$/i.test(ev.courseType || '') && !/^r[ée]servation/i.test(ev.title || '')) { ev.cat = 'cours'; ch = true; }
+      if (ev.subject && !ACADEMIC.test(ev.courseType || '')) { ev.subject = ''; ch = true; }
+      const loc = shortRooms(ev.location); if (loc !== (ev.location || '')) { ev.location = loc; ch = true; }
+      if (ch) ev.updatedAt = now;
+    }
+    const used = new Set([...d.events.map(e => e.subject), ...d.tasks.map(t => t.subject)].filter(Boolean));
+    d.subjects = d.subjects.filter(s => { if (used.has(s.id)) return true; d.deleted[s.id] = now; return false; });
+    d.migrated = 2;
+  }
 }
 
 export function persist() {

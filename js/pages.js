@@ -187,9 +187,9 @@ function wireSettings(el) {
     catch (e) { res.innerHTML = '<span class="err-msg">Ce texte n’est pas un bloc « edt-cours » valide.</span>'; return; }
     if (!list) { res.innerHTML = '<span class="err-msg">Choisis un fichier .ics ou colle un bloc JSON.</span>'; return; }
     if (!list.length) { res.innerHTML = '<span class="err-msg">Aucun cours trouvé dans ce fichier.</span>'; return; }
-    const opts = { from: el.querySelector('#imp-from').value, until: el.querySelector('#imp-until').value, replace: el.querySelector('#imp-replace').checked, includeRetakes: el.querySelector('#imp-retake').checked };
+    const opts = { from: el.querySelector('#imp-from').value, until: el.querySelector('#imp-until').value, replace: el.querySelector('#imp-replace').checked, includeRetakes: el.querySelector('#imp-retake').checked, source: file ? 'ics' : 'json' };
     let r; commit(() => { r = importCourses(list, opts); setSetting('includeRetakes', opts.includeRetakes); });
-    toast(`${r.n} cours importés${r.exams ? `, ${r.exams} examens` : ''}${r.created ? `, ${r.created} matières créées` : ''}.`, { undo: true, action: { label: '✨ Organiser', fn: () => document.dispatchEvent(new CustomEvent('organize')) } });
+    toast(`${r.n} créneau${r.n > 1 ? 'x' : ''} importé${r.n > 1 ? 's' : ''}${r.exams ? `, ${r.exams} examen${r.exams > 1 ? 's' : ''}` : ''}${r.created ? `, ${r.created} matière${r.created > 1 ? 's' : ''} créée${r.created > 1 ? 's' : ''}` : ''}.`, { undo: true, action: { label: '✨ Organiser', fn: () => document.dispatchEvent(new CustomEvent('organize')) } });
   });
 
   // synchro
