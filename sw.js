@@ -1,6 +1,6 @@
 // Service worker : le réseau d'abord, le cache si hors ligne.
 // Change la version à chaque mise à jour pour forcer le rechargement des fichiers.
-const CACHE = 'mon-planning-v2';
+const CACHE = 'mon-planning-v3';
 const FILES = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/main.js', 'js/util.js', 'js/store.js', 'js/seed.js', 'js/calendar.js', 'js/editors.js',
