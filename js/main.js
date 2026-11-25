@@ -5,7 +5,7 @@ import { renderCalendar, periodLabel, shift, initCalendarInteractions } from './
 import { renderToday, renderTasks, renderGoals, renderBilan, renderSettings, wirePages } from './pages.js';
 import { openTaskEditor, openGoalEditor, openHabitEditor, newEventAt } from './editors.js';
 import { organizeWeek } from './planner.js';
-import { toast, closeTopModal, hasModal } from './ui.js';
+import { toast, closeTopModal, hasModal, openModal } from './ui.js';
 import { SY, initSync, schedulePush, onSyncChange, syncNow, cfg as syncCfg } from './sync.js';
 import { DOW1 } from './util.js';
 
@@ -21,6 +21,30 @@ S.ui.page = (location.hash || '').slice(1) && PAGES.some(p => p[0] === location.
 
 const $ = id => document.getElementById(id);
 const view = $('view');
+
+// installation de l'appli (PWA)
+let installEvt = null;
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isAndroid = /android/i.test(navigator.userAgent);
+const INSTALL_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>';
+addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; renderSidebar(); });
+addEventListener('appinstalled', () => { installEvt = null; toast('Mon Planning est installée.'); renderSidebar(); });
+async function install() {
+  if (installEvt) {
+    const evt = installEvt; installEvt = null; evt.prompt();
+    const r = await evt.userChoice.catch(() => null);
+    if (r && r.outcome !== 'accepted') installEvt = evt;
+    renderSidebar(); return;
+  }
+  const steps = isIOS
+    ? ['Ouvre cette page dans <b>Safari</b> (Chrome ne peut pas installer d’appli sur iPhone).', 'Touche le bouton <b>Partager</b> (le carré avec une flèche vers le haut).', 'Choisis <b>Sur l’écran d’accueil</b>, puis <b>Ajouter</b>.']
+    : isAndroid
+      ? ['Touche le menu <b>⋮</b> en haut à droite de Chrome.', 'Choisis <b>Ajouter à l’écran d’accueil</b> (ou <b>Installer l’application</b>).', 'Confirme avec <b>Installer</b>.']
+      : ['Dans la barre d’adresse de Chrome ou Edge, clique sur l’icône <b>écran avec une flèche</b> tout à droite.', 'Si elle n’apparaît pas : menu <b>⋮</b> › <b>Caster, enregistrer et partager</b> › <b>Installer la page en tant qu’application…</b>', 'Si rien de tout ça n’apparaît, recharge la page (Ctrl+F5) puis réessaie.'];
+  openModal({ title: 'Installer Mon Planning', body: `<ol style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:8px;line-height:1.45">${steps.map(s => `<li>${s}</li>`).join('')}</ol>
+    <p class="small muted" style="margin:0">Une fois installée, l’appli s’ouvre en plein écran depuis l’écran d’accueil et marche sans réseau.</p>`, foot: '<span class="sp"></span><button class="btn primary" data-close>Compris</button>' });
+}
 
 function applyTheme() {
   const set = S.data.settings, root = document.documentElement;
@@ -43,6 +67,7 @@ function renderSidebar() {
     <div class="side-section mini"><div class="mini-head"><button class="btn icon sm ghost" data-minishift="-1" aria-label="Mois précédent">${ICON.left}</button><span>${['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'][d.getMonth()]} ${d.getFullYear()}</span><button class="btn icon sm ghost" data-minishift="1" aria-label="Mois suivant">${ICON.right}</button></div>
       <div class="mini-grid">${DOW1.map(x => `<span class="h">${x}</span>`).join('')}${mini}</div></div>
     <div class="side-section"><h4>Catégories</h4><div class="cat-filter">${S.data.categories.map(c => `<label style="--c:${c.color}"><input type="checkbox" data-filter="${c.id}" ${S.ui.filter[c.id] !== false ? 'checked' : ''}><span class="sw"></span><span>${esc(c.name)}</span></label>`).join('')}</div></div>
+    ${isStandalone() ? '' : `<button class="btn ${installEvt ? 'primary' : ''}" data-install style="margin:0 4px">${INSTALL_ICON} Installer l’appli</button>`}
     <button class="save-status ${sync[0]}" data-syncnow><span class="dot"></span>${esc(sync[1])}</button>`;
 }
 
@@ -100,6 +125,7 @@ document.addEventListener('click', e => {
   const v = t.closest('[data-view]'); if (v) { S.ui.view = v.dataset.view; S.ui.dayGrid = false; commit(() => { S.data.settings.view = v.dataset.view; }); return; }
   const mi = t.closest('[data-mini]'); if (mi) { S.ui.date = mi.dataset.mini; if (S.ui.page !== 'calendar') S.ui.page = 'calendar'; $('sidebar').classList.remove('open'); document.querySelector('.scrim')?.remove(); render(); return; }
   const ms = t.closest('[data-minishift]'); if (ms) { const D = parseD(S.ui.date); D.setMonth(D.getMonth() + +ms.dataset.minishift, 1); S.ui.date = dkey(D); render(); return; }
+  if (t.closest('[data-install]')) { $('sidebar').classList.remove('open'); document.querySelector('.scrim')?.remove(); install(); return; }
   if (t.closest('[data-syncnow]')) { if (syncCfg()) syncNow(); else go('settings'); return; }
   if (t.closest('.scrim')) { $('sidebar').classList.remove('open'); t.closest('.scrim').remove(); return; }
   if (t.closest('#fab')) { S.ui.page === 'tasks' ? openTaskEditor() : S.ui.page === 'goals' ? openGoalEditor() : newEvent(); return; }
@@ -143,4 +169,11 @@ render();
 requestAnimationFrame(render);           // 2e passage une fois la mise en page stabilisée (hauteur de la grille)
 addEventListener('load', () => render());
 initSync();
+// sur téléphone, propose une fois l'installation (le bouton reste aussi dans le menu ☰)
+try {
+  if (!isStandalone() && innerWidth <= 820 && !localStorage.getItem('mon-planning-install-hint')) {
+    localStorage.setItem('mon-planning-install-hint', '1');
+    setTimeout(() => toast('Installe l’appli sur ton écran d’accueil.', { action: { label: 'Installer', fn: install } }), 1500);
+  }
+} catch (e) {}
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
